@@ -66,17 +66,9 @@ fn compact(n: u64) -> String {
 fn gib(n: u64) -> String {
     format!("{:.1}", n as f64 / 1073741824.)
 }
-/// Money, as the session earned it: two digits at a dollar up, finer while it is cheap.
+/// Money, always to cents.
 fn dollars(v: f64) -> String {
-    if v >= 100.0 {
-        format!("${v:.0}")
-    } else if v >= 1.0 {
-        format!("${v:.2}")
-    } else if v >= 0.01 {
-        format!("${v:.3}")
-    } else {
-        format!("${v:.4}")
-    }
+    format!("${v:.2}")
 }
 fn opt_gib(n: Option<u64>) -> String {
     n.map(|n| format!("{} GiB", gib(n)))
@@ -1618,11 +1610,11 @@ fn rgb(color: Color, fallback: Color) -> String {
 mod tests {
     use super::*;
     #[test]
-    fn dollars_rounds_coarser_as_the_session_earns_more() {
-        assert_eq!(dollars(0.00395), "$0.0040");
-        assert_eq!(dollars(0.0161), "$0.016");
+    fn dollars_rounds_to_cents() {
+        assert_eq!(dollars(0.00395), "$0.00");
+        assert_eq!(dollars(0.0161), "$0.02");
         assert_eq!(dollars(12.342), "$12.34");
-        assert_eq!(dollars(123.4), "$123");
+        assert_eq!(dollars(123.4), "$123.40");
     }
 
     #[test]
