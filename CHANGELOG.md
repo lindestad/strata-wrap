@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Show the session's token cost in the header, at the model config's `pricing`
+  rates: cached prompt tokens at the cache-read rate, the rest at prompt and
+  completion rates. A `≥` marks the figure as a floor when history is incomplete.
+
 ## 0.3.0 — 2026-10-18
 
 - Fetch all retained request history, default ages to whole minutes, and refresh

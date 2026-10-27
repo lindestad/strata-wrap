@@ -147,6 +147,44 @@ pub struct Totals {
     pub tps: f64,
 }
 
+/// The model config's `pricing` block: USD per token. A session's cached prompt tokens
+/// are what the conversation cache served back, so they ride the cache-read rate; the
+/// act of caching is not charged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Pricing {
+    #[serde(default)]
+    pub prompt: f64,
+    #[serde(default)]
+    pub completion: f64,
+    #[serde(default, rename = "cache_read")]
+    pub cache_read: f64,
+}
+
+impl Pricing {
+    pub fn cost(&self, totals: &Totals) -> f64 {
+        let cached = (totals.reused as f64).min(totals.input as f64);
+        (totals.input as f64 - cached) * self.prompt
+            + cached * self.cache_read
+            + totals.output as f64 * self.completion
+    }
+}
+
+/// The rates from a model config, when it states them.
+pub fn pricing(config: &Value) -> Option<Pricing> {
+    config
+        .get("pricing")
+        .and_then(Value::as_object)
+        .and_then(|block| serde_json::from_value(Value::Object(block.clone())).ok())
+}
+
+/// The same from a model config file, for an attachment that joined after the worker read it.
+pub fn pricing_at(path: &std::path::Path) -> Option<Pricing> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|config| pricing(&config))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Event {
@@ -219,6 +257,8 @@ pub struct App {
     pub process_offset: usize,
     pub process_rows: usize,
     pub loading_note: String,
+    /// Rates for the session cost in the header, from the model config.
+    pub pricing: Option<Pricing>,
 }
 
 impl App {
@@ -265,6 +305,7 @@ impl App {
             process_offset: 0,
             process_rows: 3,
             loading_note: "Loading model weights and preparing the expert cache…".into(),
+            pricing: None,
         }
     }
     pub fn apply(&mut self, event: Event) {
@@ -471,6 +512,11 @@ fn local_clock() -> String {
 pub fn demo() -> App {
     let mut app = App::new("qwen3.8-flash-next-ud-iq3_s".into(), 8080);
     app.demo = true;
+    app.pricing = Some(Pricing {
+        prompt: 1.5e-7,
+        completion: 4.7e-7,
+        cache_read: 1.6e-8,
+    });
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -547,6 +593,40 @@ pub fn demo() -> App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_cost_bills_cached_prompt_tokens_at_their_own_rate() {
+        let pricing = Pricing {
+            prompt: 2.0,
+            completion: 4.0,
+            cache_read: 1.0,
+        };
+        let totals = Totals {
+            partial: false,
+            input: 100,
+            output: 50,
+            reused: 60,
+            requests: 1,
+            decode_seconds: 0.0,
+            tps: 0.0,
+        };
+        assert_eq!(pricing.cost(&totals), 40.0 * 2.0 + 60.0 * 1.0 + 50.0 * 4.0);
+        // reused can never exceed what was read
+        let totals = Totals {
+            reused: 500,
+            ..totals
+        };
+        assert_eq!(pricing.cost(&totals), 100.0 * 1.0 + 50.0 * 4.0);
+    }
+
+    #[test]
+    fn pricing_comes_only_from_a_pricing_block() {
+        assert!(pricing(&json!({"exe": "x"})).is_none());
+        assert!(pricing(&json!({"pricing": null})).is_none());
+        let p = pricing(&json!({"pricing": {"completion": 4.7e-7, "cache_write": 2e-7}})).unwrap();
+        assert_eq!((p.prompt, p.cache_read), (0.0, 0.0));
+        assert_eq!(p.completion, 4.7e-7);
+    }
+
     #[test]
     fn prefill_uses_actual_read_tokens_with_older_engine_fallback() {
         let mut request =

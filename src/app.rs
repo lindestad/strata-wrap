@@ -52,6 +52,7 @@ pub fn launch(args: &Args) -> Result<i32> {
         config["model_name"].as_str().unwrap_or("Strata").into(),
         port,
     );
+    app.pricing = model::pricing(&config);
     app.min_free_mib = args.min_free_mib;
     app.grow_below_mib = args.grow_below_mib;
     app.step_mib = args.step_mib;
@@ -591,6 +592,8 @@ pub fn attach(args: &Args) -> Result<i32> {
         let state: control::Snapshot =
             serde_json::from_value(control::call(args, control::Command::Status)?)?;
         app.address = format!("127.0.0.1:{}", state.port);
+        // the worker read the model config; its rates ride the config path it reports
+        app.pricing = model::pricing_at(&state.config_path);
         app.apply(Event::Supervisor(Box::new(state)));
         (None, 0)
     } else {
@@ -606,6 +609,7 @@ pub fn attach(args: &Args) -> Result<i32> {
             .unwrap_or_else(|| model["port"].as_u64().unwrap_or(8080) as u16);
         app.address = format!("127.0.0.1:{port}");
         app.policy = "Read-only attachment · external policy unknown".into();
+        app.pricing = crate::model::pricing(&model);
         (
             Some(runtime::Api::new(
                 port,

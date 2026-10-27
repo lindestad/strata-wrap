@@ -66,6 +66,18 @@ fn compact(n: u64) -> String {
 fn gib(n: u64) -> String {
     format!("{:.1}", n as f64 / 1073741824.)
 }
+/// Money, as the session earned it: two digits at a dollar up, finer while it is cheap.
+fn dollars(v: f64) -> String {
+    if v >= 100.0 {
+        format!("${v:.0}")
+    } else if v >= 1.0 {
+        format!("${v:.2}")
+    } else if v >= 0.01 {
+        format!("${v:.3}")
+    } else {
+        format!("${v:.4}")
+    }
+}
 fn opt_gib(n: Option<u64>) -> String {
     n.map(|n| format!("{} GiB", gib(n)))
         .unwrap_or_else(|| "—".into())
@@ -316,37 +328,42 @@ impl Ui {
             Line::from(vec![value("● ", color), value(badge, color)]),
         );
         let engine = text(&app.metrics.status, "/engine");
-        line(
-            f,
-            area,
-            1,
-            Line::from(vec![
-                self.dim(format!(
-                    " {}{}",
-                    app.address,
-                    if app.demo {
-                        "   PREVIEW"
-                    } else if app.attached {
-                        "   ATTACHED · read-only"
-                    } else {
-                        ""
-                    }
-                )),
-                self.dim(format!(
-                    "   {}",
-                    if engine.is_empty() {
-                        "starting engine"
-                    } else {
-                        engine
-                    }
-                )),
-                self.dim(format!("   {}", app.theme.name())),
-                self.dim(format!(
-                    "   session {}",
-                    clock(app.started.elapsed().as_secs_f64())
-                )),
-            ]),
-        );
+        let mut parts = vec![
+            self.dim(format!(
+                " {}{}",
+                app.address,
+                if app.demo {
+                    "   PREVIEW"
+                } else if app.attached {
+                    "   ATTACHED · read-only"
+                } else {
+                    ""
+                }
+            )),
+            self.dim(format!(
+                "   {}",
+                if engine.is_empty() {
+                    "starting engine"
+                } else {
+                    engine
+                }
+            )),
+            self.dim(format!("   {}", app.theme.name())),
+            self.dim(format!(
+                "   session {}",
+                clock(app.started.elapsed().as_secs_f64())
+            )),
+        ];
+        if let Some(pricing) = app.pricing {
+            // what the session's tokens would cost at the model config's rates
+            let totals = app.metrics.totals();
+            parts.push(self.dim(format!(
+                "   {}{}",
+                if totals.partial { "≥" } else { "" },
+                dollars(pricing.cost(&totals))
+            )));
+        }
+        line(f, area, 1, Line::from(parts));
     }
 
     fn stats(&self, f: &mut Frame, app: &App, area: Rect) {
@@ -1600,6 +1617,27 @@ fn rgb(color: Color, fallback: Color) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dollars_rounds_coarser_as_the_session_earns_more() {
+        assert_eq!(dollars(0.00395), "$0.0040");
+        assert_eq!(dollars(0.0161), "$0.016");
+        assert_eq!(dollars(12.342), "$12.34");
+        assert_eq!(dollars(123.4), "$123");
+    }
+
+    #[test]
+    fn the_header_carries_the_session_cost_only_when_rates_are_known() {
+        let text = snapshot(&crate::model::demo(), 120, 40, false).unwrap();
+        assert!(
+            text.contains("session ") && text.contains("   $0."),
+            "{text}"
+        );
+        let mut app = crate::model::App::new("m".into(), 8080);
+        app.connected = true;
+        let text = snapshot(&app, 120, 40, false).unwrap();
+        assert!(!text.contains('$'), "{text}");
+    }
+
     #[test]
     fn theme_picker_keeps_last_palette_visible_in_a_short_terminal() {
         let mut app = crate::model::demo();
